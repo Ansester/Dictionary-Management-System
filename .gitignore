@@ -1,0 +1,4 @@
+translator
+*.o
+*.out
+exported_*.txt

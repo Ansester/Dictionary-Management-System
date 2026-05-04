@@ -1,0 +1,7 @@
+German
+hello:hallo;guten tag
+water:wasser
+heat:hitze;warme
+matrix:matrix
+library:bibliothek
+simulation:simulation

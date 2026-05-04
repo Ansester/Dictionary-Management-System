@@ -3,6 +3,23 @@
 ## Overview
 This project implements a HashTable-based dictionary management system in C++. The system allows users to manage a multi-language dictionary through various operations such as importing and exporting dictionaries, adding, deleting, and finding words and their meanings.
 
+## Quick Start
+
+```bash
+make
+./translator
+```
+
+The program automatically imports `en-de.txt`, a small sample German dictionary included in the repository. Example commands once the prompt opens:
+
+```text
+find heat
+add algorithm,step-by-step procedure,german
+find algorithm
+export german,exported_german.txt
+exit
+```
+
 ## Table of Contents
 - [Overview](#overview)
 - [Technical Details](#technical-details)
@@ -45,8 +62,8 @@ The system supports the following commands:
 - `exit`: Exit the program.
 
 ## Usage Instructions
-1. Compile the program using a C++ compiler (e.g., `g++ main.cpp -o DictionarySystem`).
-2. Run the compiled program (`./DictionarySystem`).
+1. Compile the program with `make`.
+2. Run the compiled program (`./translator`).
 3. Use the provided commands to manage the dictionary.
 
 ## Conclusion
