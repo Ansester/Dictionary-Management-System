@@ -27,7 +27,6 @@ exit
   - [Main Program](#main-program)
   - [User Commands](#user-commands)
 - [Usage Instructions](#usage-instructions)
-- [Conclusion](#conclusion)
 
 ## Technical Details
 
@@ -65,6 +64,3 @@ The system supports the following commands:
 1. Compile the program with `make`.
 2. Run the compiled program (`./translator`).
 3. Use the provided commands to manage the dictionary.
-
-## Conclusion
-This dictionary management system project demonstrates the implementation of a functional multi-language dictionary using a hash table. It includes features for dictionary management, providing a comprehensive tool for handling multiple languages.
