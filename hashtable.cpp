@@ -1,433 +1,208 @@
 #include "hashtable.h"
-
-//======================================================================================================================
-// Translation Class
-//======================================================================================================================
-Translation::Translation(string meanings, string language) {
-	this->language = language;  // Assigns the language to the instance variable
-	this->meanings.push_back(meanings);  // Adds the meaning to the meanings vector
+#include <algorithm>
+#include <fstream>
+#include <iostream>
+#include <limits>
+#include <sstream>
+#include <stdexcept>
+#include <tuple>
+#include <utility>
+namespace {
+std::string trim(std::string text) {
+    const auto start = text.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return {};
+    return text.substr(start, text.find_last_not_of(" \t\r\n") - start + 1);
 }
-
-//---------------------------------------------------------------------------------
-
-void Translation::addMeaning(string newMeanings) {
-	HashTable::convertToLowercase(newMeanings);
-	for (string& i : meanings) {
-		HashTable::convertToLowercase(i);
-		if (i == newMeanings) {
-			return;  // If the meaning already exists, return without adding
-		}
-	}
-	this->meanings.push_back(newMeanings);  // Adds new meaning to the meanings vector
+std::string languageName(std::string text) {
+    text = trim(std::move(text)); HashTable::convertToLowercase(text);
+    if (text.empty()) throw std::runtime_error("Language cannot be empty");
+    return text;
 }
-
-//---------------------------------------------------------------------------------
-
-void Translation::display() {
-	cout << language << " : ";  // Displays the language followed by meanings
-	for (size_t i = 0; i < meanings.size(); ++i) {
-		cout << meanings[i];  // Prints each meaning
-		if (i < meanings.size() - 1) cout << "; ";  // Adds semicolon between meanings
-	}
-	cout << endl;  // New line at the end of the display
+std::vector<std::string> splitMeanings(const std::string& text) {
+    std::vector<std::string> result;
+    std::istringstream input(text); std::string meaning;
+    while (std::getline(input, meaning, ';')) {
+        meaning = trim(std::move(meaning));
+        if (!meaning.empty()) result.push_back(std::move(meaning));
+    }
+    if (result.empty()) throw std::runtime_error("Provide at least one meaning");
+    return result;
 }
-
-//======================================================================================================================
-// Entry Class
-//======================================================================================================================
-Entry::Entry(string word, string meanings, string language) {
-	Translation newWord(meanings, language);  // Creates a new Translation object
-	this->word = word;  // Sets the word for this entry
-	this->translations.push_back(newWord);  // Adds the new translation to the vector
-	deleted = false;  // Marks the entry as not deleted
+bool prime(std::size_t n) {
+    if (n < 2) return false;
+    if (n % 2 == 0) return n == 2;
+    for (std::size_t d = 3; d <= n / d; d += 2) if (n % d == 0) return false;
+    return true;
 }
-
-//---------------------------------------------------------------------------------
-
-void Entry::addTranslation(string newMeanings, string language) {
-	for (Translation& trans : translations) {  // Iterates over all translations
-		if (trans.language == language) {
-			trans.addMeaning(newMeanings);  // Adds meaning to the existing translation
-			return;
-		}
-	}
-	translations.push_back(Translation(newMeanings, language));  // Adds a new translation if not found
+std::size_t nextPrime(std::size_t n) {
+    n = std::max<std::size_t>(n, 7);
+    while (!prime(n)) {
+        if (n == std::numeric_limits<std::size_t>::max()) throw std::length_error("Hash table capacity overflow");
+        ++n;
+    }
+    return n;
 }
-
-//---------------------------------------------------------------------------------
-
-void Entry::print() {
-	for (Translation& i : translations) {
-		i.display();  // Displays each translation
-	}
+// a and b are reduced modulo m: avoid overflowing even for a long probe chain.
+std::size_t addMod(std::size_t a, std::size_t b, std::size_t m) {
+    return a >= m - b ? a - (m - b) : a + b;
 }
-
-//======================================================================================================================
-// HashTable Class
-//======================================================================================================================
+}
+Translation::Translation(std::string meaning, std::string language) : language(std::move(language)) {
+    meanings.push_back(std::move(meaning));
+}
+void Translation::addMeaning(std::string meaning) {
+    if (std::find(meanings.begin(), meanings.end(), meaning) == meanings.end()) meanings.push_back(std::move(meaning));
+}
+void Translation::display() const {
+    std::cout << language << " : ";
+    for (std::size_t i = 0; i < meanings.size(); ++i) std::cout << (i ? "; " : "") << meanings[i];
+    std::cout << '\n';
+}
+Entry::Entry(std::string word, std::string meaning, std::string language) : word(std::move(word)) {
+    translations.emplace_back(std::move(meaning), std::move(language));
+}
+void Entry::addTranslation(std::string meaning, std::string language) {
+    for (auto& translation : translations) if (translation.language == language) {
+        translation.addMeaning(std::move(meaning)); return;
+    }
+    translations.emplace_back(std::move(meaning), std::move(language));
+}
+void Entry::print() const { for (const auto& translation : translations) translation.display(); }
 HashTable::HashTable(int capacity) {
-	buckets = new Entry*[capacity];  // Creates an array of Entry pointers
-	for (int i = 0; i < capacity; i++)
-		buckets[i] = nullptr;  // Initializes all bucket pointers to nullptr
-	
-	this->capacity = capacity;  // Sets the capacity of the hash table
-	this->size = 0;  // Initializes the size of the hash table
-	this->collisions = 0;  // Initializes the collision count
+    if (capacity <= 0) throw std::invalid_argument("Capacity must be positive");
+    buckets.resize(nextPrime(static_cast<std::size_t>(capacity)));
 }
-
-//---------------------------------------------------------------------------------
-
-unsigned int HashTable::getSize() {
-	return size;  // Returns the number of active entries
+std::size_t HashTable::hashCode(std::string word) const {
+    // djb2 recurrence; unsigned overflow is intentional and well-defined.
+    std::size_t hash = 5381;
+    for (unsigned char character : word) hash = hash * 33 + character;
+    return hash % buckets.size();
 }
-
-//---------------------------------------------------------------------------------
-
-unsigned int HashTable::getCollisions() {
-	return collisions;  // Returns the total number of collisions
+std::size_t HashTable::locate(const std::string& word, bool countCollisions) {
+    std::size_t index = hashCode(word), step = 1, tombstone = buckets.size();
+    for (std::size_t attempt = 0; attempt < buckets.size(); ++attempt) {
+        const auto& entry = buckets[index];
+        if (!entry) return tombstone != buckets.size() ? tombstone : index;
+        if (entry->deleted) {
+            if (tombstone == buckets.size()) tombstone = index;
+        } else if (entry->word == word) return index;
+        if (countCollisions) ++collisions;
+        index = addMod(index, step, buckets.size());
+        step = addMod(step, 2, buckets.size()); // successive odd steps produce h+i^2.
+    }
+    return tombstone;
 }
-
-//---------------------------------------------------------------------------------
-
-//unsigned long HashTable::hashCode(string word) {
-//	unsigned base = 31;  // The base for polynomial rolling hash function
-//	unsigned long mod = 1e9 + 9;  // Large prime number for modulo operation
-//	unsigned long hash = 0;  // Initialize hash to 0
-//	unsigned long power_of_base = 1;  // Base raised to the power of 0 initially
-//
-//	for (char c : word) {
-//		hash = (hash + (c - 'a' + 1) * power_of_base) % mod;  // Polynomial rolling hash calculation
-//		power_of_base = (power_of_base * base) % mod;  // Update power_of_base
-//	}
-//
-//	return hash % capacity;  // Return the hash value modulo the capacity
-//}
-
-//unsigned long HashTable::hashCode(string word){
-//	unsigned long hash = 0;
-//	for (char c : word) {
-//		// Rotate hash to the left by 5 bits and then XOR with the character
-//		hash = (hash << 5) | (hash >> (32 - 5));  // Perform bitwise rotation assuming 32-bit unsigned long
-//		hash ^= c;  // XOR character into the hash value
-//	}
-//	return hash % capacity;  // Return the hash modulo the size of the hash table
-//}
-
-
-unsigned long HashTable::hashCode(string word) {
-	unsigned long hash = 5381;  // Magic constant - a good prime number to start with
-	for (char c : word) {
-		// Hash * 33 + c
-		hash = ((hash << 5) + hash) + c;  // hash * 33 + c, (hash << 5) + hash is a fast way to do hash * 33
-	}
-	return hash % capacity;  // Use modulo to ensure it fits within the table's capacity
+void HashTable::rehash(std::size_t capacity) {
+    std::vector<std::unique_ptr<Entry>> replacement(nextPrime(capacity));
+    auto old = std::move(buckets); buckets = std::move(replacement);
+    size = used = 0;
+    for (auto& entry : old) if (entry && !entry->deleted) {
+        const auto index = locate(entry->word, false);
+        buckets[index] = std::move(entry); ++size; ++used;
+    }
 }
-
-
-//---------------------------------------------------------------------------------
-
-void HashTable::insert(string word, string meanings, string language) {
-	unsigned long hash_code = hashCode(word);  // Compute the hash code for the word
-	unsigned long index = hash_code;  // Initialize the index for insertion
-	unsigned long i = 0;  // Initialize probe sequence counter
-	convertToLowercase(language);  // Convert the language to lowercase
-	
-	while (buckets[index] != nullptr && buckets[index]->word != word) {
-		collisions++;  // Increment collision count
-		i++;  // Increment probe counter
-		index = (hash_code + i * i) % capacity;  // Compute next index using quadratic probing
-		if (i == capacity) {  // If all slots have been probed
-			cerr << "Hash table is full, unable to insert new entry." << endl;
-			return;  // Exit if the table is full
-		}
-	}
-	
-	if (buckets[index] != nullptr && !buckets[index]->deleted && buckets[index]->word == word) {
-		buckets[index]->addTranslation(meanings, language);  // Adds new translation to existing entry
-		return;
-	}
-	
-	if (buckets[index] == nullptr || buckets[index]->deleted) {
-		if (buckets[index] && buckets[index]->deleted) {
-			delete buckets[index];  // Free the memory if the slot was marked as deleted
-		}
-		buckets[index] = new Entry(word, meanings, language);  // Create a new entry in the hash table
-		size++;  // Increment the size for the new entry
-	}
+Entry* HashTable::search(std::string word) {
+    word = trim(std::move(word));
+    const auto index = locate(word, false);
+    return index != buckets.size() && buckets[index] && !buckets[index]->deleted && buckets[index]->word == word
+        ? buckets[index].get() : nullptr;
 }
-
-//---------------------------------------------------------------------------------
-
-void HashTable::addWord(string word, string meanings, string language) {
-	convertToLowercase(language);  // Convert the language to lowercase
-	
-	// Split the meanings string into individual meanings using a semicolon as the delimiter
-	istringstream meaningsStream(meanings);
-	string singleMeaning;
-	
-	Entry* existingEntry = search(word);  // Search for the word in the hash table
-	
-	if (existingEntry != nullptr) {
-		// If the word already exists, just add the new translations if they are unique
-		while (getline(meaningsStream, singleMeaning, ';')) {
-			// Directly handle leading and trailing whitespace
-			singleMeaning.erase(0, singleMeaning.find_first_not_of(" \t\n\r\f\v"));  // Remove leading whitespace
-			singleMeaning.erase(singleMeaning.find_last_not_of(" \t\n\r\f\v") + 1);  // Remove trailing whitespace
-			convertToLowercase(singleMeaning);  // Convert each meaning to lowercase for consistent handling
-			if (!singleMeaning.empty()) {
-				existingEntry->addTranslation(singleMeaning, language);
-			}
-		}
-		cout << word << " successfully updated in the dictionary.\n";
-	} else {
-		// If the word does not exist, insert it as a new entry
-		bool first = true;
-		while (getline(meaningsStream, singleMeaning, ';')) {
-			// Handle leading and trailing whitespace
-			singleMeaning.erase(0, singleMeaning.find_first_not_of(" \t\n\r\f\v"));
-			singleMeaning.erase(singleMeaning.find_last_not_of(" \t\n\r\f\v") + 1);
-			convertToLowercase(singleMeaning);  // Also convert to lowercase
-			if (!singleMeaning.empty()) {
-				if (first) {
-					insert(word, singleMeaning, language);  // Insert the first meaning with the word
-					first = false;
-				} else {
-					existingEntry = search(word);  // Make sure we have the entry
-					if (existingEntry != nullptr) {
-						existingEntry->addTranslation(singleMeaning, language);
-					}
-				}
-			}
-		}
-		if (!first) {  // Check if at least one meaning was added
-			cout << word << " successfully added to the dictionary.\n";
-		} else {
-			cout << "No valid meanings provided to add.\n";
-		}
-	}
+void HashTable::insert(std::string word, std::string meaning, std::string language) {
+    word = trim(std::move(word)); meaning = trim(std::move(meaning)); language = languageName(std::move(language));
+    if (word.empty() || word.find_first_of(":;\n\r") != std::string::npos || meaning.empty() ||
+        meaning.find_first_of(";\n\r") != std::string::npos || language.find_first_of(";,:\n\r") != std::string::npos)
+        throw std::runtime_error("Word, meaning or language is empty or contains a file-format delimiter");
+    auto index = locate(word, false);
+    if (index != buckets.size() && buckets[index] && !buckets[index]->deleted && buckets[index]->word == word) {
+        buckets[index]->addTranslation(std::move(meaning), std::move(language)); return;
+    }
+    // Keeping occupied slots (including tombstones) below half a prime capacity
+    // guarantees an empty quadratic-probe position. Rebuild tombstones or grow.
+    if (used + 1 > buckets.size() / 2) {
+        std::size_t capacity = buckets.size();
+        if (size + 1 > capacity / 2) {
+            if (capacity > (std::numeric_limits<std::size_t>::max() - 1) / 2) throw std::length_error("Hash table capacity overflow");
+            capacity = capacity * 2 + 1;
+        }
+        rehash(capacity);
+    }
+    index = locate(word, true);
+    if (index == buckets.size()) throw std::runtime_error("No available hash-table probe position");
+    auto entry = std::make_unique<Entry>(std::move(word), std::move(meaning), std::move(language));
+    if (!buckets[index]) ++used;
+    buckets[index] = std::move(entry); ++size;
 }
-
-
-//---------------------------------------------------------------------------------
-
-void HashTable::delWord(string key) {
-	unsigned long hash_code = hashCode(key);  // Compute hash code for the key
-	unsigned long index = hash_code;  // Initialize index for removal
-	int noOfComp = 0;  // Comparison counter
-	
-	do {
-		Entry* currentEntry = buckets[index];
-		if (currentEntry == nullptr) {
-			cerr << "Entry not found: " << key << endl;  // Notify if entry not found
-			return;  // Exit if slot is empty
-		} else if (!currentEntry->deleted && currentEntry->word == key) {
-			currentEntry->deleted = true;// Mark entry as deleted
-			currentEntry->translations.clear();
-			cout << key << " successfully deleted from the dictionary \n";
-			size--;  // Decrement size since an entry is marked deleted
-			return;
-		}
-		noOfComp++;  // Increment comparison counter
-		index = (hash_code + noOfComp * noOfComp) % capacity;  // Quadratic probing for next index
-	} while (index != hash_code);  // Loop until start index is reached again
-	
-	cerr << "Entry not found: " << key << endl;  // Notify if entry is not found after full loop
+void HashTable::addWord(std::string word, std::string meanings, std::string language) {
+    const auto parts = splitMeanings(meanings);
+    for (const auto& meaning : parts) insert(word, meaning, language);
+    std::cout << trim(word) << " successfully added/updated in the dictionary.\n";
 }
-
-//---------------------------------------------------------------------------------
-
-void HashTable::delTranslation(string word, string language) {
-	convertToLowercase(language);  // Convert the language to lowercase
-	Entry* foo = search(word);  // Search for the word
-	if (foo != nullptr) {
-		for (auto it = foo->translations.begin(); it != foo->translations.end(); it++) {
-			if (it->language == language) {
-				foo->translations.erase(it);  // Erase the translation
-				cout << "Translation successfully deleted from the dictionary \n";
-				return;  // Exit after deletion
-			}
-		}
-		cerr << "No translations found \n";  // If no translations were found
-	} else {
-		cerr << "Word not found \n";  // If the word was not found
-	}
+void HashTable::delWord(std::string word) {
+    auto* entry = search(word);
+    if (!entry) { std::cout << "Word not found: " << word << '\n'; return; }
+    entry->deleted = true; entry->translations.clear(); --size;
+    std::cout << trim(word) << " successfully deleted from the dictionary.\n";
 }
-
-//---------------------------------------------------------------------------------
-
-Entry* HashTable::search(string key) {
-	unsigned long hash_code = hashCode(key);  // Compute hash code for the key
-	unsigned long index = hash_code;  // Initialize index for search
-	int noOfComp = 0;  // Comparison counter
-	
-	do {
-		Entry* currentEntry = buckets[index];
-		if (currentEntry == nullptr) {
-			return nullptr;  // Return not found if slot is empty
-		} else if (!currentEntry->deleted && currentEntry->word == key) {
-			return currentEntry;  // Return the entry if found and not deleted
-		}
-		noOfComp++;  // Increment comparison counter
-		index = (hash_code + noOfComp * noOfComp) % capacity;  // Quadratic probing for next index
-	} while (index != hash_code);  // Loop until start index is reached again
-	
-	return nullptr;  // Return not found if full loop completed without match
+void HashTable::delTranslation(std::string word, std::string language) {
+    language = languageName(std::move(language)); auto* entry = search(word);
+    if (entry) for (auto it = entry->translations.begin(); it != entry->translations.end(); ++it)
+        if (it->language == language) { entry->translations.erase(it); std::cout << "Translation deleted.\n"; return; }
+    std::cout << "Translation not found.\n";
 }
-
-//---------------------------------------------------------------------------------
-
-void HashTable::delMeaning(string word, string meaning, string language) {
-	convertToLowercase(language);  // Convert the language to lowercase
-	Entry* foo = search(word);  // Use search to find the entry
-	if (foo != nullptr) {  // Check if the entry exists
-		for (auto it = foo->translations.begin(); it != foo->translations.end(); ++it) {
-			if (it->language == language) {  // Match the language
-				for (auto loo = it->meanings.begin(); loo != it->meanings.end(); ) {  // Use a loop without increment here
-					if (*loo == meaning) {
-						loo = it->meanings.erase(loo);  // Erase and get the new iterator
-						cout << "Meaning successfully deleted from the dictionary \n";
-						return;  // Exit after deleting the meaning
-					} else {
-						++loo;  // Only increment if not erased
-					}
-				}
-			}
-		}
-		cerr << "No such meanings found \n";  // If no such meanings were found
-	} else {
-		cerr << word << " not found in the dictionary\n";  // Print error if word not found
-	}
+void HashTable::delMeaning(std::string word, std::string meaning, std::string language) {
+    language = languageName(std::move(language)); meaning = trim(std::move(meaning)); auto* entry = search(word);
+    if (entry) for (auto& translation : entry->translations) if (translation.language == language) {
+        const auto it = std::find(translation.meanings.begin(), translation.meanings.end(), meaning);
+        if (it != translation.meanings.end()) {
+            translation.meanings.erase(it);
+            // A language with no meanings is removed, keeping exports round-trippable.
+            if (translation.meanings.empty()) {
+                entry->translations.erase(std::remove_if(entry->translations.begin(), entry->translations.end(),
+                    [](const Translation& value) { return value.meanings.empty(); }), entry->translations.end());
+            }
+            std::cout << "Meaning deleted.\n"; return;
+        }
+    }
+    std::cout << "Meaning not found.\n";
 }
-
-//---------------------------------------------------------------------------------
-
-void HashTable::find(string word) {
-	unsigned long hash_code = hashCode(word);  // Compute hash code for the word
-	unsigned long index = hash_code % capacity;  // Initialize index for search
-	int noOfComp = 0;  // Comparison counter
-	
-	while (buckets[index] != nullptr && noOfComp < capacity) {  // Ensure slot isn't empty and not exceeding capacity
-		Entry* currentEntry = buckets[index];
-		noOfComp++;  // Increment comparison counter for each slot checked
-		if (!currentEntry->deleted && currentEntry->word == word) {
-			cout << "Word found: " << word << endl;
-			currentEntry->print();  // Print the translations
-			cout << "Comparisons made: " << noOfComp << endl;
-			return;  // Exit after printing details
-		}
-		index = (hash_code + noOfComp * noOfComp) % capacity;  // Quadratic probing for next index
-	}
-	
-	cout << "Word not found: " << word << endl;
-	cout << "Comparisons made: " << noOfComp << endl;  // Print the total comparisons made even if not found
+void HashTable::find(std::string word) {
+    if (auto* entry = search(word)) { std::cout << "Word found: " << trim(word) << '\n'; entry->print(); }
+    else std::cout << "Word not found: " << trim(word) << '\n';
 }
-
-//---------------------------------------------------------------------------------
-
-void HashTable::import(string path) {
-	ifstream file(path);  // Open the file at the specified path
-	if (!file.is_open()) {
-		cerr << "Failed to open file: " << path << endl;
-		return;
-	}
-	
-	string language;
-	if (!getline(file, language)) {  // Read the first line to get the language
-		cerr << "Failed to read the language from the file: " << path << endl;
-		file.close();
-		return;
-	}
-	
-	string line;
-	while (getline(file, line)) {  // Read each subsequent line from the file
-		size_t colonPos = line.find(':');  // Find the position of the colon
-		if (colonPos == string::npos) {
-			cerr << "Invalid format in line, no colon found: " << line << endl;
-			continue;
-		}
-		
-		string word = line.substr(0, colonPos);  // Extract the word
-		string meaningsStr = line.substr(colonPos + 1);  // Extract the meanings string
-		
-		stringstream ss(meaningsStr);
-		string meaning;
-		bool isFirstMeaning = true;
-		
-		while (getline(ss, meaning, ';')) {  // Split meanings by semicolon
-			if (isFirstMeaning) {
-				// Insert the first translation and create the Entry
-				insert(word, meaning, language);
-				isFirstMeaning = false;
-			} else {
-				// For additional meanings, we also use insert as it should handle adding to existing entries
-				insert(word, meaning, language);
-			}
-		}
-	}
-	
-	file.close();  // Close the file
+void HashTable::import(std::string path) {
+    std::ifstream file(path);
+    if (!file) throw std::runtime_error("Cannot open dictionary file: " + path);
+    std::string language, line;
+    if (!std::getline(file, language)) throw std::runtime_error("Missing dictionary language header");
+    language = languageName(std::move(language));
+    std::vector<std::pair<std::string, std::string>> records;
+    while (std::getline(file, line)) {
+        if (trim(line).empty()) continue;
+        const auto colon = line.find(':');
+        if (colon == std::string::npos || trim(line.substr(0,colon)).empty())
+            throw std::runtime_error("Invalid dictionary row: " + line);
+        const auto word = trim(line.substr(0, colon));
+        if (word.find(';') != std::string::npos) throw std::runtime_error("Invalid dictionary word");
+        for (const auto& meaning : splitMeanings(line.substr(colon + 1))) records.emplace_back(word, meaning);
+    }
+    if (!file.eof()) throw std::runtime_error("Error reading dictionary file");
+    for (const auto& [word, meaning] : records) insert(word, meaning, language);
 }
-
-//---------------------------------------------------------------------------------
-
-void HashTable::exportData(string language, string filePath) {
-	// Ensure directory exists, omitted for brevity - please implement this separately
-	ofstream file(filePath);  // Open file for writing
-	if (!file.is_open()) {
-		cerr << "Failed to open file for writing: " << filePath << endl;
-		return;
-	}
-	
-	file << language << endl;
-	
-	unsigned int entriesExported = 0;  // Initialize counter for exported entries
-	
-	for (unsigned int i = 0; i < capacity; ++i) {  // Iterate over all buckets
-		if (buckets[i] != nullptr && !buckets[i]->deleted) {  // Check if the bucket is active
-			for (Translation& translation : buckets[i]->translations) {
-				if (translation.language == language) {  // Check if the translation is in the desired language
-					// Write the word followed by its translations
-					file << buckets[i]->word << ':';  // Note the use of ':' instead of " : "
-					bool firstMeaning = true;
-					for (const string& meaning : translation.meanings) {
-						if (!firstMeaning) {
-							file << ';';  // Separate meanings with a semicolon
-						}
-						file << meaning;
-						firstMeaning = false;
-					}
-					entriesExported++;
-					file << endl;  // New line for next word
-					
-				}
-			}
-		}
-	}
-	
-	// Optionally, print how many entries were exported for debugging
-	cout << "Total entries exported: " << entriesExported << endl;
-	
-	file.close();  // Close the file
+void HashTable::exportData(std::string language, std::string path) {
+    language = languageName(std::move(language));
+    std::ofstream file(path);
+    if (!file) throw std::runtime_error("Cannot open export file: " + path);
+    file << language << '\n'; std::size_t exported = 0;
+    for (const auto& entry : buckets) if (entry && !entry->deleted)
+        for (const auto& translation : entry->translations) if (translation.language == language && !translation.meanings.empty()) {
+            file << entry->word << ':';
+            for (std::size_t i = 0; i < translation.meanings.size(); ++i) file << (i ? ";" : "") << translation.meanings[i];
+            file << '\n'; ++exported;
+        }
+    file.close(); if (!file) throw std::runtime_error("Error writing dictionary file");
+    std::cout << "Total entries exported: " << exported << '\n';
 }
-
-//---------------------------------------------------------------------------------
-
-HashTable::~HashTable() {
-	for (unsigned int i = 0; i < capacity; ++i) {
-		if (buckets[i] != nullptr) {  // Check if the bucket is not null
-			delete buckets[i];  // Delete the entry object to free the memory
-			buckets[i] = nullptr;  // Set the pointer to nullptr to avoid dangling pointer issues
-		}
-	}
-	delete[] buckets;  // Delete the array of pointers
-	buckets = nullptr;  // Set the pointer to nullptr to avoid dangling pointer issues
+void HashTable::convertToLowercase(std::string& text) {
+    // Normalize ASCII language labels only; retain spelling and UTF-8 bytes in entries.
+    for (char& character : text) if (character >= 'A' && character <= 'Z') character += 'a' - 'A';
 }
-
-//---------------------------------------------------------------------------------
-
-void HashTable::convertToLowercase(string &str) {
-	transform(str.begin(), str.end(), str.begin(),
-			  [](unsigned char c) { return tolower(c); });  // Convert string to lowercase using transform
-}
-
-//---------------------------------------------------------------------------------

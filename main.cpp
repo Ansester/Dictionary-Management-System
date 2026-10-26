@@ -1,72 +1,49 @@
-//============================================================================
-// Name         : Multi-language d
-// Author       : Khalid Mengal
-// Version      : 1.0
-// Date Created : 
-// Date Modified: 
-// Description  : HashTable Implementation using C++
-//============================================================================
-
-#include<iostream>
-#include<fstream>
-#include<sstream>
-#include<math.h>
-#include<iomanip>
-#include<list>
+// Original command-driver header credited Khalid Mengal, version 1.0.
+// Coursework repository maintained by Ashmit Mukherjee; see README provenance.
 #include "hashtable.h"
-using namespace std;
-//======================================================
-void help()
-{
-	cout<<"find <word>                         : Search a word and its meanings in the dictionary."<<endl;
-	cout<<"import <path>                       : Import a dictionary file."<<endl;
-	cout<<"export <path>                       : Export the dictionary to a file."<<endl;
-	cout<<"add <word,meaning(s),language>      : Add a word and/or its meanings (separated by ;) to the dictionary."<<endl;
-	cout<<"delTranslation <word,language>      : Delete a specific translation of a word from the dictionary."<<endl;
-	cout<<"delMeaning <word,meaning,language>  : Delete only a specific meaning of a word from the dictionary."<<endl;
-	cout<<"delWord <word>                      : Delete a word and its all translations from the dictionary."<<endl;
-	cout<<"export <language,filename>          : Export a a given language dictionary to a file."<<endl;
-	cout<<"exit                                : Exit the program"<<endl;
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+void help() {
+    std::cout << "find <word>\nimport <path>\nexport <language,filename>\n"
+                 "add <word,meaning(s),language> (separate meanings with ;)\n"
+                 "delTranslation <word,language>\ndelMeaning <word,meaning,language>\ndelWord <word>\nhelp\nexit\n";
 }
-//======================================================
-int main(int argc, char** args)
-{
-	HashTable myHashTable(1171891);//(2124867);
-	myHashTable.import("en-de.txt");
-	//myHashTable.import("en-fr.txt");
-	//myHashTable.import("en-es.txt");
-
-
-	cout<<"==================================================="<<endl;
-	cout<<"Size of HashTable                = "<<myHashTable.getSize()<<endl;
-	cout<<"Total Number of Collisions       = "<<myHashTable.getCollisions()<<endl;
-	cout<<"Avg. Number of Collisions/Entry  = "<<setprecision(2)<<float(myHashTable.getCollisions())/myHashTable.getSize()<<endl;	
-	cout<<"==================================================="<<endl;
-	help();
-	string user_input, command, argument1, argument2, argument3;
-
-	while(true)
-	{
-	
-		cout<<">";
-		getline(cin,user_input);
-
-		stringstream sstr(user_input);
-		getline(sstr,command,' ');
-		getline(sstr,argument1,',');
-		getline(sstr,argument2,',');
-		getline(sstr,argument3);
-
-			if(command == "find")   		  myHashTable.find(argument1);
-		else if(command == "import")		  myHashTable.import(argument1);
-		else if(command == "add")		      myHashTable.addWord(argument1,argument2,argument3); //word,meaning,language
-		else if(command == "delWord")         myHashTable.delWord(argument1);
-		else if(command == "delTranslation")  myHashTable.delTranslation(argument1,argument2);
-		else if(command == "delMeaning")      myHashTable.delMeaning(argument1,argument2,argument3);
-		else if(command == "export")          myHashTable.exportData(argument1,argument2);
-		else if(command == "help")	  	      help();
-		else if(command == "exit")	  	      break;
-		else cout<<"Invalid command !!!"<<endl;
-	}
-	return 0;
+int main() {
+    HashTable dictionary(101);
+    try { dictionary.import("en-de.txt"); }
+    catch (const std::exception& error) { std::cout << "Notice: " << error.what() << "; starting with an empty dictionary.\n"; }
+    std::cout << "Size of HashTable = " << dictionary.getSize() << '\n'; help();
+    std::string line;
+    while (std::cout << "> " && std::getline(std::cin, line)) {
+        try {
+            std::istringstream input(line); std::string command, arguments;
+            if (!(input >> command)) continue;
+            std::getline(input >> std::ws, arguments);
+            if (command == "exit" || command == "help") {
+                if (!arguments.empty()) throw std::runtime_error("Unexpected arguments");
+                if (command == "exit") return 0;
+                help(); continue;
+            }
+            if (command == "find" || command == "delWord" || command == "import") {
+                if (arguments.empty()) throw std::runtime_error("Missing argument");
+                if (command == "find") dictionary.find(arguments);
+                else if (command == "delWord") dictionary.delWord(arguments);
+                else dictionary.import(arguments);
+                continue;
+            }
+            std::vector<std::string> parts;
+            std::istringstream separated(arguments); std::string part;
+            while (std::getline(separated, part, ',')) parts.push_back(part);
+            const std::size_t expected = (command == "add" || command == "delMeaning") ? 3 : 2;
+            if (parts.size() != expected) throw std::runtime_error("Wrong number of comma-separated arguments");
+            if (command == "add") dictionary.addWord(parts[0], parts[1], parts[2]);
+            else if (command == "delTranslation") dictionary.delTranslation(parts[0],parts[1]);
+            else if (command == "delMeaning") dictionary.delMeaning(parts[0],parts[1],parts[2]);
+            else if (command == "export") dictionary.exportData(parts[0],parts[1]);
+            else throw std::runtime_error("Unknown command; enter help");
+        } catch (const std::exception& error) { std::cout << "Error: " << error.what() << '\n'; }
+    }
 }

@@ -1,4 +1,6 @@
 translator
 *.o
 *.out
-exported_*.txt
+__pycache__/
+test_hash
+*.dSYM/

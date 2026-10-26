@@ -1,0 +1,11 @@
+name: C++ regression checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Compile and test with AddressSanitizer and UndefinedBehaviorSanitizer
+        run: make CXX=g++ CXXFLAGS="-std=c++17 -O1 -g -Wall -Wextra -Wpedantic -fsanitize=address,undefined -fno-omit-frame-pointer" test

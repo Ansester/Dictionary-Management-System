@@ -1,33 +1,17 @@
-# Set g++ as the C++ compiler
-CC=g++
-
-# Enforce C++ 2011 as the language standard
-CXXFLAGS=-std=c++11 
-
-# Enable all standard warnings, uninitialized variable warnings, 
-# and treat all warnings as errors
-CXXFLAGS+= -Wall
-
-# NOTE: comment following line temporarily if 
-# your development environment is failing
-# due to these settings - it is important that 
-# you fix your environment at some point.
-CXXFLAGS+=-fsanitize=address -fsanitize=undefined
-
-# Object Files
-OBJS=hashtable.o main.o
-# Target
-TARGET=translator
-
-$(TARGET): $(OBJS)
-	@echo "Linking: $(OBJS) -> $@"
-	$(CC) $(CXXFLAGS) $(OBJS) -o $(TARGET)
-hashtable.o:	hashtable.h hashtable.cpp
-	@echo "Compiling: $^ -> $@"
-	$(CC) $(CXXFLAGS) -c hashtable.cpp	
-main.o:	main.cpp
-	@echo "Compiling: $< -> $@"
-	$(CC) $(CXXFLAGS) -c  main.cpp
+CXX ?= c++
+CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Wpedantic
+TARGET = translator
+SOURCES = hashtable.cpp main.cpp
+HEADERS = $(wildcard *.h)
+.PHONY: all test clean
+all: $(TARGET)
+$(TARGET): $(SOURCES) $(HEADERS)
+	$(CXX) $(CXXFLAGS) $(SOURCES) -o $@
+test: $(TARGET) test_hash
+	python3 tests/test_cli.py ./$(TARGET)
+	./test_hash
 clean:
-	@echo "Deleting: $(OBJS) $(TARGET)"
-	rm -rf $(OBJS) $(TARGET)
+	rm -f $(TARGET) test_hash *.o
+
+test_hash: tests/test_hash.cpp hashtable.cpp hashtable.h
+	$(CXX) $(CXXFLAGS) tests/test_hash.cpp hashtable.cpp -o $@

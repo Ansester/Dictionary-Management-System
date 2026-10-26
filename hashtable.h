@@ -1,69 +1,50 @@
-#ifndef _HASHTABLE
-#define _HASHTABLE
-#include <vector>
+#ifndef DICTIONARY_HASHTABLE_H
+#define DICTIONARY_HASHTABLE_H
+#include <cstddef>
+#include <memory>
 #include <string>
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <algorithm>
-#include <cctype>
-using namespace std;
-
-
-class Translation
-{
-private:
-	string language;
-	vector<string> meanings;
+#include <vector>
+class Translation {
+    std::string language;
+    std::vector<std::string> meanings;
+    friend class Entry;
+    friend class HashTable;
 public:
-	Translation(string meanings,string language);
-	void addMeaning(string newMeanings);
-	void display();
-	friend class Entry;
-	friend class HashTable;
+    Translation(std::string meaning, std::string language);
+    void addMeaning(std::string meaning);
+    void display() const;
 };
-
-
-class Entry
-{
-private:
-	string word;
-	vector<Translation> translations;
-	bool deleted;  // is the bucket is available to be reused after being deleted
+class Entry {
+    std::string word;
+    std::vector<Translation> translations;
+    bool deleted = false;
+    friend class HashTable;
 public:
-	Entry(string word, string meanings,string language);
-	void addTranslation(string newMeanings, string language);
-	void print();
-	friend class HashTable;
+    Entry(std::string word, std::string meaning, std::string language);
+    void addTranslation(std::string meaning, std::string language);
+    void print() const;
 };
-
-
-class HashTable
-{
-private:
-	Entry **buckets;		        			// Array of Pointers to Entries for Linear and Quadratic Probing
-	unsigned int size;					   		//Current Size of HashTable
-	unsigned int capacity;				    	// Total Capacity of HashTable
-	unsigned int collisions; 					// Total Number of Collisions
+class HashTable {
+    std::vector<std::unique_ptr<Entry>> buckets;
+    std::size_t size = 0, used = 0, collisions = 0;
+    std::size_t locate(const std::string& word, bool countCollisions);
+    void rehash(std::size_t capacity);
 public:
-	HashTable(int capacity);
-	unsigned long hashCode(string word);
-	unsigned int getSize(); 
-	unsigned int getCollisions();
-	void import(string path);
-	void addWord(string word, string meanings, string language);
-	void delWord(string word);
-	void insert(string word, string meanings,string language);
-	void delTranslation(string word, string language);
-	void delMeaning(string word, string meaning, string language);
-	void exportData(string language, string filePath);
-	void find(string word);
-	Entry* search(string word); //Helper function that searches for a word in the hash table and returns a pointer to the entry. returns null pointer if not found
-	static void convertToLowercase(string &str); //Helper function that converts a give string to lower case
-	~HashTable();
+    explicit HashTable(int capacity);
+    HashTable(const HashTable&) = delete;
+    HashTable& operator=(const HashTable&) = delete;
+    std::size_t hashCode(std::string word) const;
+    std::size_t getSize() const { return size; }
+    std::size_t getCollisions() const { return collisions; }
+    void import(std::string path);
+    void addWord(std::string word, std::string meanings, std::string language);
+    void delWord(std::string word);
+    void insert(std::string word, std::string meaning, std::string language);
+    void delTranslation(std::string word, std::string language);
+    void delMeaning(std::string word, std::string meaning, std::string language);
+    void exportData(std::string language, std::string path);
+    void find(std::string word);
+    Entry* search(std::string word);
+    static void convertToLowercase(std::string& text);
 };
-
-
-
-
 #endif
